@@ -339,13 +339,9 @@ const App = {
     const eurAmount = Currency.toEUR(item.payload.amount, item.payload.currency, rates);
     const eurRate = Currency.rateFor(item.payload.currency, rates);
 
-    const headerKey = `${cfg.googleSheetId}|${cfg.googleSheetTab}`;
-    if (cfg._googleHeaderEnsuredFor !== headerKey) {
-      await GoogleSheets.ensureHeaderRow(cfg, interactive);
-      cfg._googleHeaderEnsuredFor = headerKey;
-      await Config.save({ _googleHeaderEnsuredFor: headerKey });
-    }
-
+    // Row 1 (headers) is the user's own and is never touched here.
+    // appendExpense() writes date/amount/vendor plus the matching
+    // category column — see its comment for the sheet's real layout.
     await GoogleSheets.appendExpense(cfg, { ...item.payload, eurAmount, eurRate }, interactive);
   },
 
