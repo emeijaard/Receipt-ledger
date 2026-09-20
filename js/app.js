@@ -29,6 +29,12 @@ const App = {
       else if (result === 'error') this.toast('Dropbox connection failed. Please try again in Settings.');
     }
 
+    // A previous page session may have left an item stuck showing
+    // "Syncing…" because the tab was closed or reloaded mid-sync — that
+    // status is stale the moment the page reloads, so clear it back to
+    // "pending" rather than leaving a misleading indicator forever.
+    await this.resetStuckSendingItems();
+
     this.wireNav();
     this.wireNewFlow();
     this.wireSettings();
@@ -37,11 +43,28 @@ const App = {
     await this.renderQueue();
     await this.renderHistory();
 
-    window.addEventListener('online', () => { this.updateOfflineBanner(); this.trySyncQueue(); });
+    // Auto-sync on load / reconnect is NOT a user click, so it must never
+    // try to pop up Google's interactive sign-in window (browsers block
+    // that silently). Passing interactive:false means: sync anything that
+    // doesn't need fresh Google permission (Dropbox items, or Google items
+    // if we still hold a valid in-memory token) and otherwise just leave
+    // Google items queued for the next real "Sync now" click.
+    window.addEventListener('online', () => { this.updateOfflineBanner(); this.trySyncQueue({ interactive: false }); });
     window.addEventListener('offline', () => this.updateOfflineBanner());
     this.updateOfflineBanner();
 
-    if (navigator.onLine) this.trySyncQueue();
+    if (navigator.onLine) this.trySyncQueue({ interactive: false });
+  },
+
+  async resetStuckSendingItems() {
+    const items = await IDB.queueAll();
+    for (const item of items) {
+      if (item.status === 'sending') {
+        item.status = 'pending';
+        item.error = null;
+        await IDB.queueUpdate(item);
+      }
+    }
   },
 
   toast(msg, ms = 3200) {
@@ -271,17 +294,26 @@ const App = {
   },
 
   // ---------------- Sync ----------------
-  async trySyncQueue() {
+  // `interactive: true` (the default — used by the "Sync now" click) may
+  // pop up Google's sign-in window. `interactive: false` (used by
+  // auto-sync on load/reconnect) will only use a Google token already
+  // held in memory, and otherwise leaves Google items queued rather than
+  // trying — and possibly getting silently blocked — on its own.
+  async trySyncQueue(opts = {}) {
+    const interactive = opts.interactive !== false;
     if (this.syncing || !navigator.onLine) return;
     this.syncing = true;
     try {
       const items = await IDB.queueAll();
       for (const item of items) {
+        if (item.type === 'personal' && !interactive && !GoogleSheets.hasValidToken()) {
+          continue; // leave it queued for the next real "Sync now" click
+        }
         item.status = 'sending';
         await IDB.queueUpdate(item);
         await this.renderQueue();
         try {
-          if (item.type === 'personal') await this.syncPersonal(item);
+          if (item.type === 'personal') await this.syncPersonal(item, interactive);
           else await this.syncBusiness(item);
           await IDB.queueRemove(item.id);
           await this.addHistory(item);
@@ -300,7 +332,7 @@ const App = {
     }
   },
 
-  async syncPersonal(item) {
+  async syncPersonal(item, interactive = true) {
     const cfg = await Config.load();
     if (!Config.isGoogleConfigured(cfg)) throw new Error("Google Sheets isn't set up yet — check Settings.");
     const rates = await Currency.ensureRates(cfg.currencies);
@@ -309,12 +341,12 @@ const App = {
 
     const headerKey = `${cfg.googleSheetId}|${cfg.googleSheetTab}`;
     if (cfg._googleHeaderEnsuredFor !== headerKey) {
-      await GoogleSheets.ensureHeaderRow(cfg);
+      await GoogleSheets.ensureHeaderRow(cfg, interactive);
       cfg._googleHeaderEnsuredFor = headerKey;
       await Config.save({ _googleHeaderEnsuredFor: headerKey });
     }
 
-    await GoogleSheets.appendExpense(cfg, { ...item.payload, eurAmount, eurRate });
+    await GoogleSheets.appendExpense(cfg, { ...item.payload, eurAmount, eurRate }, interactive);
   },
 
   async syncBusiness(item) {
@@ -411,7 +443,7 @@ const App = {
     } catch (err) {
       console.warn('Pre-auth before sync failed (sync will retry the sign-in itself)', err);
     }
-    this.trySyncQueue();
+    this.trySyncQueue({ interactive: true });
   },
 
   async renderHistory() {
