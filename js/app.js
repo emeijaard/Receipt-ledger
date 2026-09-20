@@ -102,6 +102,10 @@ const App = {
     });
     this.el('photo-input').addEventListener('change', (e) => this.onPhotoSelected(e));
     this.el('skip-ocr-btn').addEventListener('click', () => this.goToForm({}));
+    // Lets the user log an expense with no receipt photo at all (e.g. cash
+    // tips, a verbal split, a lost receipt) — skips straight to the form
+    // with nothing pre-filled and no photo attached to the saved item.
+    this.el('no-receipt-btn').addEventListener('click', () => this.goToForm({}));
 
     this.el('f-amount').addEventListener('input', () => this.updateEurPreview());
     this.el('f-currency').addEventListener('change', async () => {
@@ -527,4 +531,3 @@ const App = {
 };
 
 document.addEventListener('DOMContentLoaded', () => App.init());
-
