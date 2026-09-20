@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#146359">
+<title>Receipt Ledger</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="app-header">
+  <h1 id="header-title">Receipt Ledger</h1>
+  <button class="icon-btn" id="theme-toggle" title="Toggle theme">&#9789;</button>
+</header>
+
+<main>
+
+  <!-- ============ NEW RECEIPT ============ -->
+  <section id="view-new" class="view active">
+
+    <div id="offline-banner" class="banner warn" style="display:none;">
+      You're offline. You can still capture receipts — they'll sync automatically once you're back online.
+    </div>
+
+    <div id="step-choose">
+      <div class="card">
+        <div class="section-title">What kind of expense?</div>
+        <div class="choice-grid">
+          <div class="choice-card" data-type="personal"><span class="glyph">&#127968;</span>Personal</div>
+          <div class="choice-card" data-type="business"><span class="glyph">&#128188;</span>Business</div>
+        </div>
+        <div class="hint">Personal expenses go to your Google Sheet. Business expenses go to your Dropbox Excel ledger.</div>
+      </div>
+    </div>
+
+    <div id="step-capture" style="display:none;">
+      <div class="card">
+        <div class="section-title"><span class="badge" id="type-badge"></span></div>
+        <label class="photo-capture" id="photo-capture-label">
+          <div class="placeholder" id="photo-placeholder">
+            <span class="glyph">&#128247;</span>
+            Tap to take a photo of the receipt
+          </div>
+          <img id="photo-preview" alt="Receipt photo" style="display:none;">
+          <input type="file" accept="image/*" capture="environment" id="photo-input">
+        </label>
+        <div class="ocr-status" id="ocr-status" style="display:none;">
+          <span class="spinner"></span> <span id="ocr-status-text">Reading receipt…</span>
+        </div>
+        <button class="link-btn" id="skip-ocr-btn" style="display:none;">Enter details manually instead</button>
+        <button class="link-btn" id="back-to-choose-btn">&larr; Change type</button>
+      </div>
+    </div>
+
+    <div id="step-form" style="display:none;">
+      <div class="card">
+        <div class="section-title"><span class="badge" id="type-badge-2"></span></div>
+
+        <div class="field">
+          <label>Date</label>
+          <input type="date" id="f-date">
+        </div>
+        <div class="field">
+          <label>Vendor / Description</label>
+          <input type="text" id="f-vendor" placeholder="e.g. Alfamart">
+        </div>
+        <div class="field">
+          <label>Category</label>
+          <select id="f-category"></select>
+        </div>
+        <div class="amount-row">
+          <div class="field">
+            <label>Amount</label>
+            <input type="number" step="0.01" min="0" inputmode="decimal" id="f-amount" placeholder="0.00">
+          </div>
+          <div class="field currency-field">
+            <label>Currency</label>
+            <select id="f-currency"></select>
+          </div>
+        </div>
+        <div class="eur-preview" id="eur-preview"></div>
+        <div class="field" style="margin-top:14px;">
+          <label>Notes (optional)</label>
+          <textarea id="f-notes" rows="2" placeholder="Anything worth remembering about this one"></textarea>
+        </div>
+      </div>
+      <button class="primary" id="save-btn">Save expense</button>
+      <button class="secondary" id="cancel-btn">Cancel</button>
+    </div>
+
+  </section>
+
+  <!-- ============ QUEUE / HISTORY ============ -->
+  <section id="view-queue" class="view">
+    <div class="card" id="queue-card">
+      <div class="section-title">Pending sync</div>
+      <div id="queue-list"><div class="empty-state"><span class="glyph">&#10003;</span>Nothing waiting to sync.</div></div>
+    </div>
+    <button class="primary" id="sync-btn">Sync now</button>
+
+    <div class="card" id="history-card" style="margin-top:16px;">
+      <div class="section-title">Recently saved</div>
+      <div id="history-list"><div class="empty-state">No receipts saved yet.</div></div>
+    </div>
+  </section>
+
+  <!-- ============ SETTINGS ============ -->
+  <section id="view-settings" class="view">
+
+    <div class="card">
+      <div class="section-title">Google Sheets (personal expenses)</div>
+      <div class="connection-row">
+        <div>
+          <div class="name"><span class="dot off" id="google-dot"></span>Google Sheets</div>
+          <div class="status" id="google-status">Not connected</div>
+        </div>
+        <button class="link-btn" id="google-test-btn">Test</button>
+      </div>
+      <div class="field" style="margin-top:12px;">
+        <label>OAuth Client ID</label>
+        <input type="text" id="s-google-client-id" placeholder="xxxx.apps.googleusercontent.com">
+      </div>
+      <div class="field">
+        <label>Google Sheet (URL or ID)</label>
+        <input type="text" id="s-google-sheet-id" placeholder="Paste the Sheet's URL">
+      </div>
+      <div class="field">
+        <label>Tab name</label>
+        <input type="text" id="s-google-sheet-tab" placeholder="Expenses">
+      </div>
+      <div class="hint">Authorized JavaScript origin to register in Google Cloud Console: <code id="google-origin-hint"></code></div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">Dropbox (business expenses)</div>
+      <div class="connection-row">
+        <div>
+          <div class="name"><span class="dot off" id="dropbox-dot"></span>Dropbox</div>
+          <div class="status" id="dropbox-status">Not connected</div>
+        </div>
+        <button class="link-btn" id="dropbox-connect-btn">Connect</button>
+      </div>
+      <div class="field" style="margin-top:12px;">
+        <label>App key</label>
+        <input type="text" id="s-dropbox-app-key" placeholder="Dropbox app key">
+      </div>
+      <div class="field">
+        <label>Excel ledger path</label>
+        <input type="text" id="s-dropbox-excel-path" placeholder="/Business Expenses/business_expenses.xlsx">
+      </div>
+      <div class="field">
+        <label>Receipts folder</label>
+        <input type="text" id="s-dropbox-receipts-folder" placeholder="/Business Expenses/Receipts">
+      </div>
+      <div class="hint">Redirect URI to register in the Dropbox App Console: <code id="dropbox-redirect-hint"></code></div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">Personal categories</div>
+      <div class="tag-list" id="personal-categories-list"></div>
+      <div class="field" style="margin-top:10px;">
+        <input type="text" id="personal-category-input" placeholder="Add a category and press enter">
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">Business categories</div>
+      <div class="tag-list" id="business-categories-list"></div>
+      <div class="field" style="margin-top:10px;">
+        <input type="text" id="business-category-input" placeholder="Add a category and press enter">
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">Currencies</div>
+      <div class="tag-list" id="currency-list"></div>
+      <div class="field" style="margin-top:10px;">
+        <input type="text" id="currency-input" placeholder="Add a 3-letter currency code and press enter" maxlength="3" style="text-transform:uppercase;">
+      </div>
+      <div class="field" style="margin-top:10px;">
+        <label>Default currency</label>
+        <select id="s-default-currency"></select>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">Appearance</div>
+      <div class="field">
+        <label>Theme</label>
+        <select id="s-theme">
+          <option value="auto">Match phone</option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="hint" style="text-align:center; padding: 6px 0 20px;">Receipt Ledger — all data stays between your phone, Google and Dropbox.</div>
+
+  </section>
+
+</main>
+
+<div class="toast" id="toast"></div>
+
+<nav class="bottom-nav">
+  <button data-view="new" class="nav-btn active"><span class="glyph">&#65291;</span>New</button>
+  <button data-view="queue" class="nav-btn"><span class="glyph">&#128337;</span>Queue<span id="queue-badge"></span></button>
+  <button data-view="settings" class="nav-btn"><span class="glyph">&#9881;</span>Settings</button>
+</nav>
+
+<!-- Vendor libraries -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+
+<script src="js/idb.js"></script>
+<script src="js/config.js"></script>
+<script src="js/currency.js"></script>
+<script src="js/google.js"></script>
+<script src="js/dropbox.js"></script>
+<script src="js/xlsxHelper.js"></script>
+<script src="js/ocr.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
+
