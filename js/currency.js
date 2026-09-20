@@ -1,69 +1,41 @@
-// Daily EUR conversion via the Frankfurter API (ECB reference rates,
-// free, no API key, CORS-enabled). Rates are cached once per day in
-// IndexedDB so the app works offline after the first fetch that day.
+// Daily EUR conversion via the open.er-api.com endpoint (Open Exchange
+// Rates' free tier — ~166 currencies incl. ones the ECB/Frankfurter feed
+// doesn't publish, such as BND, free, no API key, CORS-enabled, rates
+// refresh once a day). It returns every currency's rate against EUR in a
+// single request, so we just cache the whole table once a day instead of
+// requesting specific codes. Rates are cached in IndexedDB so the app
+// works offline after the first fetch that day.
 'use strict';
 
-const FRANKFURTER_BASE = 'https://api.frankfurter.dev/v1';
+const FX_URL = 'https://open.er-api.com/v6/latest/EUR';
 
 const Currency = {
-  _memRates: null, // { date, base:'EUR', rates:{USD:1.09,...}, stale:false }
+  _memRates: null, // { date, rates:{USD:1.09,...}, stale:false }
 
   todayKey() {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   },
 
-  // The full set of codes Frankfurter/ECB actually publishes. Cached
-  // indefinitely so one unsupported/typo'd currency the user added in
-  // Settings can't take down the rates for every other currency in the
-  // same batched request.
-  async _supportedCodes() {
-    if (this._supportedCache) return this._supportedCache;
-    const cached = await IDB.get('fx_supported');
-    if (cached && cached.length) { this._supportedCache = cached; return cached; }
-    try {
-      const res = await fetch(`${FRANKFURTER_BASE}/currencies`, { cache: 'no-store' });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      const codes = Object.keys(data);
-      await IDB.set('fx_supported', codes);
-      this._supportedCache = codes;
-      return codes;
-    } catch (err) {
-      return null; // unknown — caller should not filter in this case
-    }
-  },
-
-  // Ensures today's rates are loaded (from cache or network) for the given
-  // list of currency codes. Returns { date, rates, stale }.
+  // Ensures today's rates are loaded (from cache or network). Returns
+  // { date, rates, stale }. `currencyCodes` isn't needed to build the
+  // request (the API hands back the full table either way) but is kept
+  // as a parameter so callers don't need to change.
   async ensureRates(currencyCodes) {
     const today = this.todayKey();
     const cached = await IDB.get('fx_cache');
 
-    let codes = Array.from(new Set(currencyCodes.filter((c) => c && c !== 'EUR')));
-    const supported = await this._supportedCodes();
-    if (supported) codes = codes.filter((c) => supported.includes(c));
-
-    if (!codes.length) {
-      this._memRates = cached && cached.date === today ? { ...cached, stale: false } : { date: today, rates: {}, stale: false };
-      return this._memRates;
-    }
-
-    if (cached && cached.date === today && codes.every((c) => c in cached.rates)) {
+    if (cached && cached.date === today) {
       this._memRates = { ...cached, stale: false };
       return this._memRates;
     }
 
     try {
-      const url = `${FRANKFURTER_BASE}/latest?to=${encodeURIComponent(codes.join(','))}`;
-      const res = await fetch(url, { cache: 'no-store' });
-      if (!res.ok) throw new Error(`Frankfurter HTTP ${res.status}`);
+      const res = await fetch(FX_URL, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`FX HTTP ${res.status}`);
       const data = await res.json();
-      const fresh = {
-        date: today,
-        rates: Object.assign({}, cached ? cached.rates : {}, data.rates || {}),
-        source: 'network'
-      };
+      if (data.result !== 'success' || !data.rates) throw new Error('FX response missing rates');
+      const fresh = { date: today, rates: data.rates, source: 'network' };
       await IDB.set('fx_cache', fresh);
       this._memRates = { ...fresh, stale: false };
       return this._memRates;
@@ -95,4 +67,3 @@ const Currency = {
     return rs && rs.rates ? rs.rates[code] : undefined;
   }
 };
-
