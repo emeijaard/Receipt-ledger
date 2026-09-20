@@ -7,8 +7,20 @@ const DropboxAPI = {
   _accessToken: null,
   _expiresAt: 0,
 
+  // Always normalizes to the same URL (origin + directory, no filename)
+  // regardless of how the page was loaded. This matters because launching
+  // the installed home-screen icon starts at the manifest's start_url
+  // ("./index.html"), while opening it as a normal browser tab lands on
+  // just the directory URL ("/Receipt-ledger/") — two different strings
+  // for the exact same app. Dropbox requires an exact match against the
+  // one redirect URI registered in the App Console, so without this
+  // normalization, connecting from the home-screen icon fails with
+  // "invalid redirect_uri" even though connecting from a browser tab works.
   redirectUri() {
-    return window.location.origin + window.location.pathname;
+    let path = window.location.pathname;
+    if (path.endsWith('index.html')) path = path.slice(0, -'index.html'.length);
+    if (!path.endsWith('/')) path += '/';
+    return window.location.origin + path;
   },
 
   base64UrlEncode(buffer) {
@@ -167,4 +179,3 @@ const DropboxAPI = {
     return res.json();
   }
 };
-
