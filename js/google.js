@@ -48,14 +48,34 @@ const GoogleSheets = {
     return this._tokenClient;
   },
 
-  // Resolves a valid access token, prompting the user with the Google
-  // consent popup only if we don't already have one cached in memory.
-  async getAccessToken(clientId, { interactive = true } = {}) {
-    if (this._accessToken && Date.now() < this._expiresAt - 30000) {
-      return this._accessToken;
-    }
+  // True when we already hold an access token in memory that isn't about
+  // to expire — i.e. a caller could get one right now with zero prompting.
+  hasValidToken() {
+    return !!(this._accessToken && Date.now() < this._expiresAt - 30000);
+  },
+
+  // Resolves a valid access token. When `interactive` is true this may pop
+  // up Google's sign-in window — but ONLY do that from inside a genuine
+  // user click, since browsers silently block popups opened without one.
+  // When `interactive` is false we ask Google for a token with no prompt
+  // at all (`prompt: 'none'`); that can succeed silently if the browser
+  // still has an active Google session and consent from before, but it
+  // will not show anything to the user.
+  //
+  // Either way this is guaranteed to settle within `timeoutMs`. That
+  // matters because when a popup request has no user gesture to attach
+  // to, the browser blocks it and Google's library just logs a console
+  // warning — it never calls our callback, so without this timeout the
+  // returned promise would hang forever. That used to happen on every
+  // page load (App.init() auto-syncs), permanently wedging the app's
+  // in-memory "syncing" flag and making the real "Sync now" button
+  // appear to do nothing on the next click.
+  async getAccessToken(clientId, { interactive = true, timeoutMs } = {}) {
+    if (this.hasValidToken()) return this._accessToken;
+    const effectiveTimeout = timeoutMs != null ? timeoutMs : (interactive ? 90000 : 6000);
     const client = await this._ensureTokenClient(clientId);
-    return new Promise((resolve, reject) => {
+
+    const tokenPromise = new Promise((resolve, reject) => {
       client.callback = (resp) => {
         if (resp.error) {
           reject(new Error(`Google sign-in failed: ${resp.error}`));
@@ -71,10 +91,20 @@ const GoogleSheets = {
         reject(err);
       }
     });
+
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => {
+        reject(new Error(interactive
+          ? 'Google sign-in timed out or was blocked — tap "Sync now" again.'
+          : 'No existing Google session to sync with automatically — tap "Sync now" to sign in.'));
+      }, effectiveTimeout);
+    });
+
+    return Promise.race([tokenPromise, timeoutPromise]);
   },
 
-  async _sheetsFetch(clientId, path, options = {}) {
-    const token = await this.getAccessToken(clientId);
+  async _sheetsFetch(clientId, path, options = {}, interactive = true) {
+    const token = await this.getAccessToken(clientId, { interactive });
     const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${path}`, {
       ...options,
       headers: {
@@ -93,18 +123,19 @@ const GoogleSheets = {
   HEADER_ROW: ['Date', 'Vendor', 'Category', 'Currency', 'Amount', 'EUR Rate', 'Amount (EUR)', 'Notes'],
 
   // Writes the header row only if row 1 of the tab is currently empty.
-  async ensureHeaderRow(cfg) {
+  async ensureHeaderRow(cfg, interactive = true) {
     const range = encodeURIComponent(`${cfg.googleSheetTab}!A1:H1`);
-    const existing = await this._sheetsFetch(cfg.googleClientId, `${cfg.googleSheetId}/values/${range}`);
+    const existing = await this._sheetsFetch(cfg.googleClientId, `${cfg.googleSheetId}/values/${range}`, {}, interactive);
     if (existing.values && existing.values.length) return; // already has content
     await this._sheetsFetch(
       cfg.googleClientId,
       `${cfg.googleSheetId}/values/${range}?valueInputOption=USER_ENTERED`,
-      { method: 'PUT', body: JSON.stringify({ range: `${cfg.googleSheetTab}!A1:H1`, values: [this.HEADER_ROW] }) }
+      { method: 'PUT', body: JSON.stringify({ range: `${cfg.googleSheetTab}!A1:H1`, values: [this.HEADER_ROW] }) },
+      interactive
     );
   },
 
-  async appendExpense(cfg, entry) {
+  async appendExpense(cfg, entry, interactive = true) {
     const range = encodeURIComponent(`${cfg.googleSheetTab}!A:H`);
     const row = [
       entry.date,
@@ -119,13 +150,14 @@ const GoogleSheets = {
     return this._sheetsFetch(
       cfg.googleClientId,
       `${cfg.googleSheetId}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
-      { method: 'POST', body: JSON.stringify({ values: [row] }) }
+      { method: 'POST', body: JSON.stringify({ values: [row] }) },
+      interactive
     );
   },
 
   // Simple connectivity check used by the Settings screen.
   async testConnection(cfg) {
-    await this._sheetsFetch(cfg.googleClientId, `${cfg.googleSheetId}?fields=properties.title`);
+    await this._sheetsFetch(cfg.googleClientId, `${cfg.googleSheetId}?fields=properties.title`, {}, true);
   },
 
   signOut() {
@@ -145,4 +177,3 @@ function parseGoogleSheetId(input) {
   const match = trimmed.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
   return match ? match[1] : trimmed;
 }
-
