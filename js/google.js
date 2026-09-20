@@ -120,33 +120,51 @@ const GoogleSheets = {
     return res.json();
   },
 
-  HEADER_ROW: ['Date', 'Vendor', 'Category', 'Currency', 'Amount', 'EUR Rate', 'Amount (EUR)', 'Notes'],
+  // This sheet's own layout (the user's, not this app's): it's a
+  // category-per-column ledger, not a flat table.
+  //   A = Date
+  //   B = Amount (now EUR, going forward)
+  //   C = Description / vendor
+  //   D = Other currency (left blank — not used by this app)
+  //   E onward = one column PER PERSONAL CATEGORY, in the exact order of
+  //              cfg.personalCategories (Car→E, Staff/Services→F, ...,
+  //              Medical→P). The amount is written a second time into
+  //              whichever of those columns matches the expense's
+  //              category, mirroring how every historical row already
+  //              does it (that's how the sheet tallies spend per category).
+  // Row 1 (headers) is never written or modified by us.
+  CATEGORY_COLUMNS_START: 4, // 0-based column index of the first category column (E)
 
-  // Writes the header row only if row 1 of the tab is currently empty.
-  async ensureHeaderRow(cfg, interactive = true) {
-    const range = encodeURIComponent(`${cfg.googleSheetTab}!A1:H1`);
-    const existing = await this._sheetsFetch(cfg.googleClientId, `${cfg.googleSheetId}/values/${range}`, {}, interactive);
-    if (existing.values && existing.values.length) return; // already has content
-    await this._sheetsFetch(
-      cfg.googleClientId,
-      `${cfg.googleSheetId}/values/${range}?valueInputOption=USER_ENTERED`,
-      { method: 'PUT', body: JSON.stringify({ range: `${cfg.googleSheetTab}!A1:H1`, values: [this.HEADER_ROW] }) },
-      interactive
-    );
+  columnLetter(index) {
+    let letter = '';
+    let n = index + 1; // 1-based
+    while (n > 0) {
+      const rem = (n - 1) % 26;
+      letter = String.fromCharCode(65 + rem) + letter;
+      n = Math.floor((n - 1) / 26);
+    }
+    return letter;
   },
 
   async appendExpense(cfg, entry, interactive = true) {
-    const range = encodeURIComponent(`${cfg.googleSheetTab}!A:H`);
-    const row = [
-      entry.date,
-      entry.vendor || '',
-      entry.category || '',
-      entry.currency,
-      entry.amount,
-      entry.eurRate != null ? entry.eurRate : '',
-      entry.eurAmount != null ? Number(entry.eurAmount.toFixed(2)) : '',
-      entry.notes || ''
-    ];
+    const eurAmount = entry.eurAmount != null ? Number(entry.eurAmount.toFixed(2)) : '';
+    const categories = cfg.personalCategories || [];
+    const catIndex = categories.indexOf(entry.category);
+
+    const row = ['', '', '', ''];
+    row[0] = entry.date || '';
+    row[1] = eurAmount;
+    row[2] = entry.vendor || '';
+    // row[3] ("Other currency") intentionally left blank
+
+    if (catIndex >= 0) {
+      const col = this.CATEGORY_COLUMNS_START + catIndex;
+      while (row.length <= col) row.push('');
+      row[col] = eurAmount;
+    }
+
+    const lastCol = this.columnLetter(row.length - 1);
+    const range = encodeURIComponent(`${cfg.googleSheetTab}!A:${lastCol}`);
     return this._sheetsFetch(
       cfg.googleClientId,
       `${cfg.googleSheetId}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
