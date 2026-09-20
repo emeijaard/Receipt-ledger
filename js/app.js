@@ -391,7 +391,27 @@ const App = {
       });
     });
 
-    this.el('sync-btn').onclick = () => this.trySyncQueue();
+    this.el('sync-btn').onclick = () => this.syncNowFromClick();
+  },
+
+  // "Sync now" is a direct click, which is the one moment Google's sign-in
+  // popup is allowed to open. trySyncQueue() normally fetches FX rates over
+  // the network before it ever touches Google — that network wait is often
+  // enough for the browser to decide the click's "user gesture" has expired,
+  // so the popup gets silently blocked even though a real person clicked.
+  // Requesting the Google token FIRST, right inside the click handler,
+  // keeps the request inside the gesture window; trySyncQueue() then reuses
+  // the already-fetched token instead of asking again.
+  async syncNowFromClick() {
+    try {
+      const cfg = await Config.load();
+      if (Config.isGoogleConfigured(cfg)) {
+        await GoogleSheets.getAccessToken(cfg.googleClientId);
+      }
+    } catch (err) {
+      console.warn('Pre-auth before sync failed (sync will retry the sign-in itself)', err);
+    }
+    this.trySyncQueue();
   },
 
   async renderHistory() {
