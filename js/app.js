@@ -152,6 +152,10 @@ const App = {
     this.el('photo-placeholder').style.display = '';
     this.el('ocr-status').style.display = 'none';
     this.el('skip-ocr-btn').style.display = 'none';
+    this.el('f-project').value = '';
+    this.el('f-payer').value = '';
+    this.el('f-paid-through').value = '';
+    this.el('f-country').value = '';
   },
 
   // Resets the in-progress entry AND makes sure the "New" tab is the one
@@ -213,6 +217,11 @@ const App = {
     this.el('type-badge-2').textContent = this.currentType === 'personal' ? 'Personal → Google Sheet' : 'Business → Dropbox Excel';
     this.el('type-badge-2').className = `badge ${this.currentType}`;
 
+    // Project/Payer/Paid through/Country only apply to business expenses
+    // (they map to columns in the Dropbox Excel ledger that personal
+    // expenses don't use).
+    this.el('business-fields').style.display = this.currentType === 'business' ? '' : 'none';
+
     this.el('f-date').value = guess.date || this.todayISO();
     this.el('f-vendor').value = guess.vendor || '';
     this.el('f-notes').value = '';
@@ -249,12 +258,6 @@ const App = {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   },
 
-  genUniqueId(dateStr) {
-    const compact = (dateStr || this.todayISO()).replace(/-/g, '');
-    const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
-    return `${compact}-${rand}`;
-  },
-
   async saveExpense() {
     const date = this.el('f-date').value || this.todayISO();
     const vendor = this.el('f-vendor').value.trim();
@@ -269,7 +272,15 @@ const App = {
     }
 
     const payload = { date, vendor, category, currency, amount, notes };
-    if (this.currentType === 'business') payload.uniqueId = this.genUniqueId(date);
+    if (this.currentType === 'business') {
+      // The receipt number (EX-YYYY-MM-NN) isn't assigned until sync time
+      // — it depends on reading the live Excel file to keep the sequence
+      // correct, which needs network access. See XlsxHelper.appendRow().
+      payload.project = this.el('f-project').value.trim();
+      payload.payer = this.el('f-payer').value.trim();
+      payload.paidThrough = this.el('f-paid-through').value.trim();
+      payload.country = this.el('f-country').value.trim();
+    }
 
     const item = {
       id: (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`),
@@ -313,8 +324,15 @@ const App = {
         await IDB.queueUpdate(item);
         await this.renderQueue();
         try {
-          if (item.type === 'personal') await this.syncPersonal(item, interactive);
-          else await this.syncBusiness(item);
+          if (item.type === 'personal') {
+            await this.syncPersonal(item, interactive);
+          } else {
+            // syncBusiness assigns the receipt number (it has to read the
+            // live sheet first to know the next one), so record it back
+            // onto the item for the "Recently saved" list and the receipt
+            // photo filename.
+            item.payload.uniqueId = await this.syncBusiness(item);
+          }
           await IDB.queueRemove(item.id);
           await this.addHistory(item);
         } catch (err) {
@@ -345,6 +363,7 @@ const App = {
     await GoogleSheets.appendExpense(cfg, { ...item.payload, eurAmount, eurRate }, interactive);
   },
 
+  // Returns the assigned receipt number (e.g. "EX-2026-09-01") on success.
   async syncBusiness(item) {
     const cfg = await Config.load();
     if (!Config.isDropboxConfigured(cfg)) throw new Error("Dropbox isn't set up yet — check Settings.");
@@ -355,15 +374,16 @@ const App = {
     const eurRate = Currency.rateFor(item.payload.currency, rates);
 
     const existing = await DropboxAPI.downloadFile(cfg.dropboxAppKey, cfg.dropboxExcelPath);
-    const receiptFile = item.photoBlob ? `${item.payload.uniqueId}.jpg` : '';
-    const newBuf = XlsxHelper.appendRow(existing, { ...item.payload, eurAmount, eurRate, receiptFile });
+    const { buffer: newBuf, receiptNr } = XlsxHelper.appendRow(existing, { ...item.payload, eurAmount, eurRate });
     await DropboxAPI.uploadFile(cfg.dropboxAppKey, cfg.dropboxExcelPath, newBuf);
 
     if (item.photoBlob) {
       const folder = cfg.dropboxReceiptsFolder.replace(/\/+$/, '');
-      const path = `${folder}/${item.payload.uniqueId}.jpg`;
+      const path = `${folder}/${receiptNr}.jpg`;
       await DropboxAPI.uploadFile(cfg.dropboxAppKey, path, item.photoBlob);
     }
+
+    return receiptNr;
   },
 
   async addHistory(item) {
