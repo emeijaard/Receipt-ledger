@@ -454,7 +454,7 @@ const App = {
     try {
       const cfg = await Config.load();
       if (Config.isGoogleConfigured(cfg)) {
-        await GoogleSheets.getAccessToken(cfg.googleClientId);
+        await GoogleSheets.getAccessToken(cfg.googleClientId, { hint: cfg.googleAccountHint });
       }
     } catch (err) {
       console.warn('Pre-auth before sync failed (sync will retry the sign-in itself)', err);
@@ -492,6 +492,7 @@ const App = {
     saveField('s-google-client-id', 'googleClientId');
     saveField('s-google-sheet-id', 'googleSheetId', (v) => parseGoogleSheetId(v));
     saveField('s-google-sheet-tab', 'googleSheetTab');
+    saveField('s-google-account-hint', 'googleAccountHint', (v) => v.toLowerCase());
     saveField('s-dropbox-app-key', 'dropboxAppKey');
     saveField('s-dropbox-excel-path', 'dropboxExcelPath');
     saveField('s-dropbox-receipts-folder', 'dropboxReceiptsFolder');
@@ -576,6 +577,7 @@ const App = {
     this.el('s-google-client-id').value = cfg.googleClientId;
     this.el('s-google-sheet-id').value = cfg.googleSheetId;
     this.el('s-google-sheet-tab').value = cfg.googleSheetTab;
+    this.el('s-google-account-hint').value = cfg.googleAccountHint;
     this.el('s-dropbox-app-key').value = cfg.dropboxAppKey;
     this.el('s-dropbox-excel-path').value = cfg.dropboxExcelPath;
     this.el('s-dropbox-receipts-folder').value = cfg.dropboxReceiptsFolder;
