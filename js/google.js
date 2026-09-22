@@ -35,15 +35,25 @@ const GoogleSheets = {
     return this._gisLoaded;
   },
 
-  async _ensureTokenClient(clientId) {
+  async _ensureTokenClient(clientId, hint) {
     await this.loadGis();
-    if (!this._tokenClient || this._tokenClientId !== clientId) {
+    if (!this._tokenClient || this._tokenClientId !== clientId || this._tokenClientHint !== hint) {
       this._tokenClientId = clientId;
-      this._tokenClient = google.accounts.oauth2.initTokenClient({
+      this._tokenClientHint = hint;
+      const config = {
         client_id: clientId,
         scope: this.SCOPE,
         callback: () => {} // overridden per-call below
-      });
+      };
+      // `hint` tells Google which account to use directly, instead of
+      // falling back to whichever Google account the browser currently
+      // treats as its default/active one. This matters most for silent
+      // (non-interactive) token requests — the ones auto-sync makes with
+      // no account picker shown — which otherwise silently pick up
+      // whatever account the browser last used, even if that's the wrong
+      // one for this app.
+      if (hint) config.hint = hint;
+      this._tokenClient = google.accounts.oauth2.initTokenClient(config);
     }
     return this._tokenClient;
   },
@@ -70,10 +80,10 @@ const GoogleSheets = {
   // page load (App.init() auto-syncs), permanently wedging the app's
   // in-memory "syncing" flag and making the real "Sync now" button
   // appear to do nothing on the next click.
-  async getAccessToken(clientId, { interactive = true, timeoutMs } = {}) {
+  async getAccessToken(clientId, { interactive = true, timeoutMs, hint } = {}) {
     if (this.hasValidToken()) return this._accessToken;
     const effectiveTimeout = timeoutMs != null ? timeoutMs : (interactive ? 90000 : 6000);
-    const client = await this._ensureTokenClient(clientId);
+    const client = await this._ensureTokenClient(clientId, hint);
 
     const tokenPromise = new Promise((resolve, reject) => {
       client.callback = (resp) => {
@@ -103,8 +113,8 @@ const GoogleSheets = {
     return Promise.race([tokenPromise, timeoutPromise]);
   },
 
-  async _sheetsFetch(clientId, path, options = {}, interactive = true) {
-    const token = await this.getAccessToken(clientId, { interactive });
+  async _sheetsFetch(clientId, hint, path, options = {}, interactive = true) {
+    const token = await this.getAccessToken(clientId, { interactive, hint });
     const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${path}`, {
       ...options,
       headers: {
@@ -167,6 +177,7 @@ const GoogleSheets = {
     const range = encodeURIComponent(`${cfg.googleSheetTab}!A:${lastCol}`);
     return this._sheetsFetch(
       cfg.googleClientId,
+      cfg.googleAccountHint,
       `${cfg.googleSheetId}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
       { method: 'POST', body: JSON.stringify({ values: [row] }) },
       interactive
@@ -175,7 +186,7 @@ const GoogleSheets = {
 
   // Simple connectivity check used by the Settings screen.
   async testConnection(cfg) {
-    await this._sheetsFetch(cfg.googleClientId, `${cfg.googleSheetId}?fields=properties.title`, {}, true);
+    await this._sheetsFetch(cfg.googleClientId, cfg.googleAccountHint, `${cfg.googleSheetId}?fields=properties.title`, {}, true);
   },
 
   signOut() {
