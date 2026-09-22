@@ -156,6 +156,18 @@ const GoogleSheets = {
     return letter;
   },
 
+  // A1 notation requires a sheet/tab name to be wrapped in single quotes
+  // whenever it contains anything other than plain letters, digits, or
+  // underscores — a space, a "+", an "&", etc. all count. Without this,
+  // a tab name like "Rona+Erik" produces an unparseable range and the
+  // Sheets API rejects it with a 400 "Unable to parse range" error. Any
+  // single quote inside the name itself must be doubled, per Google's own
+  // escaping rule for A1 ranges.
+  quotedSheetName(name) {
+    if (/^[A-Za-z0-9_]+$/.test(name)) return name;
+    return `'${String(name).replace(/'/g, "''")}'`;
+  },
+
   async appendExpense(cfg, entry, interactive = true) {
     const eurAmount = entry.eurAmount != null ? Number(entry.eurAmount.toFixed(2)) : '';
     const categories = cfg.personalCategories || [];
@@ -174,7 +186,7 @@ const GoogleSheets = {
     }
 
     const lastCol = this.columnLetter(row.length - 1);
-    const range = encodeURIComponent(`${cfg.googleSheetTab}!A:${lastCol}`);
+    const range = encodeURIComponent(`${this.quotedSheetName(cfg.googleSheetTab)}!A:${lastCol}`);
     return this._sheetsFetch(
       cfg.googleClientId,
       cfg.googleAccountHint,
