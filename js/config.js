@@ -20,6 +20,12 @@ const DEFAULT_SETTINGS = {
   googleClientId: '',
   googleSheetId: '',
   googleSheetTab: 'Expenses',
+  // Which Google account to sign in with, e.g. "you@gmail.com". Optional,
+  // but strongly recommended: without it, Google falls back to whichever
+  // account this device/browser currently treats as its default one,
+  // which is what caused repeated "wrong account" 403 errors when the
+  // device also had a different Google account active.
+  googleAccountHint: '',
 
   // Dropbox
   dropboxAppKey: '',
@@ -66,4 +72,3 @@ const Config = {
     return !!(cfg.dropboxAppKey && cfg.dropboxExcelPath);
   }
 };
-
